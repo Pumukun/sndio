@@ -351,11 +351,10 @@ resamp_do(struct resamp *p, adata_t *in, adata_t *out, int icnt, int ocnt)
 		if (diff >= oblksz) {
 			if (ifr == 0)
 				break;
-			ctx_start = (ctx_start + 1) & (RESAMP_NCTX - 1);
+			ctx_start = (ctx_start - 1) & (RESAMP_NCTX - 1);
 			ctx = ctxbuf + ctx_start;
 			for (c = nch; c > 0; c--) {
 				*ctx = *idata++;
-				logx(1, "\nctxbuf[%d] = %d, channel %u", ctx_start + c * RESAMP_NCTX, *ctx, c);
 				ctx += RESAMP_NCTX;
 			}
 			diff -= oblksz;
@@ -367,23 +366,27 @@ resamp_do(struct resamp *p, adata_t *in, adata_t *out, int icnt, int ocnt)
 			ctx = ctxbuf;
 
 			float ratio = (float)iblksz / oblksz;
-			float ipos = (float)(ocnt - ofr) * ratio + (float)diff / oblksz;
+			float ipos = (float)(ocnt - ofr) * ratio;
 			int idx = (int)ipos;
 			float frac = ipos - idx;
 
-			logx(1, "ipos = %f, ipos_r = %d, frac = %f", ipos, (int)ipos, frac);
+#ifdef DEBUG
+			logx(4, "ipos = %f, idx = %d, frac = %f", ipos, idx, frac);
+#endif
 
 			for (c = 0; c < nch; c++) {
 				float y[4];
 
-				y[0] = ctx[(ctx_start - 1) & (RESAMP_NCTX - 1)];
-				y[1] = ctx[ctx_start & (RESAMP_NCTX - 1)];
-				y[2] = ctx[(ctx_start + 1) & (RESAMP_NCTX - 1)];
-				y[3] = ctx[(ctx_start + 2) & (RESAMP_NCTX - 1)];
+				for (int i = -1; i <= 2; ++i) {
+					int k = (ctx_start + i) & (RESAMP_NCTX - 1);
+					y[i + 1] = (float)ctx[k];
+				}
 
 				ctx += RESAMP_NCTX;
 
-				logx(1, "c=%d, y[0]=%f, y[1]=%f, y[2]=%f, y[3]=%f", c, y[0], y[1], y[2], y[3]);
+#ifdef DEBUG
+				logx(4, "c=%d, y[0]=%f, y[1]=%f, y[2]=%f, y[3]=%f", c, y[0], y[1], y[2], y[3]);
+#endif
 
 				float value = cubic_interpolate(y[0], y[1], y[2], y[3], frac);
 
