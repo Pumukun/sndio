@@ -360,6 +360,14 @@ resamp_getcnt(struct resamp *p, int *icnt, int *ocnt)
 		*icnt = (odiff + p->diff) / p->oblksz;
 }
 
+float cubic_interpolate(float y0, float y1, float y2, float y3, float t) {
+	float a = -0.5f * y0 + 1.5f * y1 - 1.5f * y2 + 0.5f * y3;
+	float b = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
+	float c = -0.5f * y0 + 0.5f * y2;
+	float d = y1;
+	return a * t * t * t + b * t * t + c * t + d;
+}
+
 /*
  * Resample the given number of frames. The number of output frames
  * must match the corresponding number of input frames. Either always
@@ -415,7 +423,7 @@ resamp_do(struct resamp *p, adata_t *in, adata_t *out, int icnt, int ocnt)
 			ctx_start = (ctx_start - 1) & (RESAMP_NCTX - 1);
 			ctx = ctxbuf + ctx_start;
 			for (c = nch; c > 0; c--) {
-				*ctx = *idata++;
+				//*ctx = *idata++;
 				ctx += RESAMP_NCTX;
 			}
 			diff -= oblksz;
@@ -424,30 +432,35 @@ resamp_do(struct resamp *p, adata_t *in, adata_t *out, int icnt, int ocnt)
 			if (ofr == 0)
 				break;
 
-			for (c = 0; c < nch; c++)
-				f[c] = 0;
+			ctx = ctxbuf;
 
-			q = diff * p->filt_step;
-			n = ctx_start;
+			float ratio = (float)iblksz / oblksz;
+			float ipos = (float)(ocnt - ofr) * ratio;
+			int idx = (int)ipos;
+			float frac = ipos - idx;
 
-			while (q < RESAMP_LENGTH) {
-				qi = q >> RESAMP_STEP_BITS;
-				qf = q & (RESAMP_STEP - 1);
-				s = resamp_filt[qi];
-				ds = resamp_filt[qi + 1] - s;
-				s += (int64_t)qf * ds >> RESAMP_STEP_BITS;
-				ctx = ctxbuf;
-				for (c = 0; c < nch; c++) {
-					f[c] += (int64_t)ctx[n] * s;
-					ctx += RESAMP_NCTX;
-				}
-				q += p->filt_cutoff;
-				n = (n + 1) & (RESAMP_NCTX - 1);
-			}
+#ifdef DEBUG
+		logx(4, "ipos = %f, idx = %d, frac = %f", ipos, idx, frac);
+#endif
 
 			for (c = 0; c < nch; c++) {
-				s = f[c] >> RESAMP_BITS;
-				s = (int64_t)s * p->filt_cutoff >> RESAMP_BITS;
+				float y[4];
+
+				for (int i = -1; i <= 2; ++i) {
+					int k = idx + i;
+					if (k < 0) k = 0;
+					if (k > icnt) k = icnt - 1;
+					y[i + 1] = (float)idata[k * nch + c];
+				}
+
+				float value = cubic_interpolate(y[0], y[1], y[2], y[3], frac);
+
+				s = (int)value;
+
+#ifdef DEBUG
+				logx(4, "c=%d, y[0]=%f, y[1]=%f, y[2]=%f, y[3]=%f\nvalue=%f", c, y[0], y[1], y[2], y[3], value);
+#endif
+
 #if ADATA_BITS == 16
 				/*
 				 * In 16-bit mode, we've no room for filter
